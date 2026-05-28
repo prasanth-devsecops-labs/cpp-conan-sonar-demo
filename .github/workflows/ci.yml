@@ -11,15 +11,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Required for accurate SonarQube blame/history analysis
+
+      # Required so CMake can find a C++ compiler to generate "Unix Makefiles"
+      - name: Install Build Essentials
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.11'
 
       - name: Install Conan
         run: |
@@ -29,14 +33,7 @@ jobs:
         run: |
           conan profile detect --force
 
-      - name: Cache Conan packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.conan2/p
-          key: ${{ runner.os }}-conan-${{ hashFiles('**/conanfile.txt', '**/conanfile.py') }}
-          restore-keys: |
-            ${{ runner.os }}-conan-
-
+      # Conan installs outputs to the 'build' folder using the CMakeDeps / CMakeToolchain generators
       - name: Install Dependencies
         run: |
           conan install . \
@@ -44,10 +41,11 @@ jobs:
             --build=missing \
             -s build_type=Release
 
+      # Syntax corrected and toolchain path set to where Conan actually generates it
       - name: Configure CMake
         run: |
           cmake -S . -B build \
-            -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake \
+            -DCMAKE_TOOLCHAIN_FILE=build/generators/conan_toolchain.cmake \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCMAKE_BUILD_TYPE=Release
 
@@ -55,11 +53,15 @@ jobs:
         run: |
           cmake --build build
 
-      - name: Run SonarQube Scanner
-        uses: sonarsource/sonarqube-scan-action@v5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        with:
-          args: >
+      - name: Install SonarScanner
+        run: |
+          wget https://sonarsource.com
+          unzip sonar-scanner-cli-7.0.2.4839-linux-x64.zip
+          mv sonar-scanner-7.0.2.4839-linux-x64 sonar-scanner
+
+      - name: Sonar Scan
+        run: |
+          ./sonar-scanner/bin/sonar-scanner \
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }} \
             -Dsonar.cfamily.compile-commands=build/compile_commands.json
